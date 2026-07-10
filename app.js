@@ -1,13 +1,92 @@
 // --- Data Management ---
-const STORAGE_KEY = 'SistemNilaiData_v2'; // Changed key to avoid conflict with old data structure
+const GOOGLE_SHEETS_URL = 'https://script.google.com/macros/s/AKfycbxICJjeVt-XwZRjG0-7IUV33-lQgJM4ie4yJ8NMbJcFAFXeZKHKODweUXoksnH3Z9T4/exec';
+
+let appData = { mataKuliah: {}, students: {} };
 
 function getData() {
-    const data = localStorage.getItem(STORAGE_KEY);
-    return data ? JSON.parse(data) : { mataKuliah: {}, students: {} };
+    return appData;
 }
 
-function saveData(data) {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+function sendToGoogleSheets(payload) {
+    // Fire and forget using text/plain to avoid CORS preflight issues
+    fetch(GOOGLE_SHEETS_URL, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: {
+            'Content-Type': 'text/plain'
+        },
+        body: JSON.stringify(payload)
+    }).then(() => {
+        console.log("Sync request to Google Sheets completed.");
+    }).catch(err => {
+        console.error("Error syncing to Google Sheets:", err);
+    });
+}
+
+// --- Fetch Data from Sheets ---
+async function fetchDataFromGoogleSheets() {
+    const overlay = document.getElementById('loading-overlay');
+    try {
+        const response = await fetch(GOOGLE_SHEETS_URL);
+        const data = await response.json();
+        
+        // Reconstruct appData from Google Sheets JSON
+        appData = { mataKuliah: {}, students: {} };
+        
+        // Parse Master Matkul
+        if (data.mataKuliah) {
+            data.mataKuliah.forEach(mk => {
+                appData.mataKuliah[mk.kode] = { 
+                    kode: mk.kode, 
+                    nama: mk.nama, 
+                    sks: parseInt(mk.sks) 
+                };
+            });
+        }
+        
+        // Parse Students
+        if (data.students) {
+            data.students.forEach(row => {
+                const nim = row.nim;
+                const semester = row.semester;
+                
+                if (!appData.students[nim]) {
+                    appData.students[nim] = {
+                        nim: nim,
+                        nama: row.nama,
+                        semesters: {}
+                    };
+                }
+                
+                if (!appData.students[nim].semesters[semester]) {
+                    appData.students[nim].semesters[semester] = [];
+                }
+                
+                appData.students[nim].semesters[semester].push({
+                    kode: row.matkul, // Assuming matkul stores the name, if they stored kode it would be better. Let's use it as matkul name for now
+                    matkul: row.matkul,
+                    sks: parseInt(row.sks),
+                    nilaiHuruf: row.nilaiHuruf,
+                    nilaiAngka: scale[row.nilaiHuruf] || 0
+                });
+            });
+        }
+        
+        // Update UI
+        updateDashboard();
+        updateMasterView();
+        populateMatkulDropdown();
+        updateView();
+        
+        // Hide overlay
+        overlay.classList.add('opacity-0', 'pointer-events-none');
+        setTimeout(() => overlay.classList.add('hidden'), 300);
+        
+    } catch (error) {
+        console.error("Error fetching data:", error);
+        alert("Gagal memuat data dari Google Sheets. Pastikan URL Web App benar dan bisa diakses secara publik.");
+        overlay.classList.add('opacity-0', 'pointer-events-none');
+    }
 }
 
 const scale = {
@@ -45,7 +124,7 @@ function switchTab(tabId) {
     document.getElementById('sec-input').classList.remove('block');
     document.getElementById('sec-view').classList.add('hidden');
     document.getElementById('sec-view').classList.remove('block');
-    
+
     // Remove active class from all nav items
     document.getElementById('nav-dashboard').classList.remove('nav-active');
     document.getElementById('nav-master').classList.remove('nav-active');
@@ -67,7 +146,7 @@ function switchTab(tabId) {
     if (tabId === 'master') updateMasterView();
     if (tabId === 'input') populateMatkulDropdown();
     if (tabId === 'view') updateView();
-    
+
     // Hide detail view when switching away from view tab
     if (tabId !== 'view') closeDetail();
 }
@@ -77,17 +156,17 @@ function showToast(message, type = 'success') {
     const toast = document.getElementById('toast');
     const msgEl = document.getElementById('toast-msg');
     const iconEl = document.getElementById('toast-icon');
-    
+
     msgEl.innerText = message;
-    
+
     if (type === 'error') {
         iconEl.innerHTML = '<i class="fas fa-exclamation-circle text-xl text-red-400"></i>';
     } else {
         iconEl.innerHTML = '<i class="fas fa-check-circle text-xl text-green-400"></i>';
     }
-    
+
     toast.classList.remove('translate-y-full', 'opacity-0');
-    
+
     setTimeout(() => {
         toast.classList.add('translate-y-full', 'opacity-0');
     }, 3000);
@@ -96,39 +175,47 @@ function showToast(message, type = 'success') {
 // --- MASTER DATA LOGIC ---
 function handleMasterSubmit(event) {
     event.preventDefault();
-    
+
     const kode = document.getElementById('master-kode').value.trim().toUpperCase();
     const nama = document.getElementById('master-nama').value.trim();
     const sks = parseInt(document.getElementById('master-sks').value);
-    
+
     const data = getData();
-    
+
     data.mataKuliah[kode] = { kode, nama, sks };
-    saveData(data);
-    
+
+    // Send to Google Sheets (Optimistic UI - update local memory first)
+    sendToGoogleSheets({
+        id: Date.now(),
+        action: 'master_matkul',
+        kode: kode,
+        namaMK: nama,
+        sks: sks
+    });
+
     document.getElementById('master-kode').value = '';
     document.getElementById('master-nama').value = '';
     document.getElementById('master-sks').value = '';
     document.getElementById('master-kode').focus();
-    
+
     updateMasterView();
-    showToast(`Mata kuliah ${nama} ditambahkan!`);
+    showToast(`Mata kuliah ${nama} ditambahkan & disinkron!`);
 }
 
 function updateMasterView() {
     const data = getData();
     const tbody = document.getElementById('table-master-body');
     const emptyState = document.getElementById('empty-master-state');
-    
+
     tbody.innerHTML = '';
-    
+
     const matkuls = Object.values(data.mataKuliah);
-    
+
     if (matkuls.length === 0) {
         emptyState.classList.remove('hidden');
     } else {
         emptyState.classList.add('hidden');
-        
+
         matkuls.forEach(mk => {
             const tr = document.createElement('tr');
             tr.className = 'hover:bg-gray-50 transition-colors';
@@ -148,13 +235,7 @@ function updateMasterView() {
 }
 
 function deleteMaster(kode) {
-    if(confirm(`Yakin ingin menghapus mata kuliah ${kode}?`)) {
-        const data = getData();
-        delete data.mataKuliah[kode];
-        saveData(data);
-        updateMasterView();
-        showToast('Mata kuliah dihapus.', 'success');
-    }
+    alert("Penghapusan data tidak dapat dilakukan dari sistem ini karena sekarang menggunakan Google Sheets murni. Silakan hapus baris data secara manual di Google Sheets Anda lalu refresh halaman ini.");
 }
 
 // --- INPUT NILAI LOGIC ---
@@ -163,12 +244,12 @@ function populateMatkulDropdown() {
     const select = document.getElementById('input-matkul');
     const alertNoMaster = document.getElementById('alert-no-master');
     const btnSubmit = document.getElementById('btn-submit-nilai');
-    
+
     const matkuls = Object.values(data.mataKuliah);
-    
+
     // Clear existing options
     select.innerHTML = '<option value="" disabled selected>-- Pilih Mata Kuliah --</option>';
-    
+
     if (matkuls.length === 0) {
         alertNoMaster.classList.remove('hidden');
         btnSubmit.disabled = true;
@@ -177,7 +258,7 @@ function populateMatkulDropdown() {
         alertNoMaster.classList.add('hidden');
         btnSubmit.disabled = false;
         btnSubmit.classList.remove('opacity-50', 'cursor-not-allowed');
-        
+
         matkuls.forEach(mk => {
             const option = document.createElement('option');
             option.value = mk.kode;
@@ -188,7 +269,7 @@ function populateMatkulDropdown() {
             select.appendChild(option);
         });
     }
-    
+
     // Reset SKS display
     document.getElementById('display-sks').value = '';
     document.getElementById('input-sks').value = '';
@@ -196,7 +277,7 @@ function populateMatkulDropdown() {
 
 function updateSksDisplay() {
     const select = document.getElementById('input-matkul');
-    if(select.selectedIndex > 0) {
+    if (select.selectedIndex > 0) {
         const option = select.options[select.selectedIndex];
         const sks = option.getAttribute('data-sks');
         document.getElementById('display-sks').value = `${sks} SKS`;
@@ -206,21 +287,21 @@ function updateSksDisplay() {
 
 function handleFormSubmit(event) {
     event.preventDefault();
-    
+
     const nim = document.getElementById('input-nim').value.trim();
     const nama = document.getElementById('input-nama').value.trim();
     const semester = document.getElementById('input-semester').value;
-    
+
     const select = document.getElementById('input-matkul');
     const kodeMk = select.value;
     const namaMk = select.options[select.selectedIndex].getAttribute('data-nama');
     const sks = parseInt(document.getElementById('input-sks').value);
-    
+
     const nilaiHuruf = document.getElementById('input-nilai').value;
     const nilaiAngka = scale[nilaiHuruf];
 
     const data = getData();
-    
+
     // Initialize student if not exists
     if (!data.students[nim]) {
         data.students[nim] = {
@@ -239,7 +320,7 @@ function handleFormSubmit(event) {
 
     // Check if subject already inputted for this semester
     const exists = data.students[nim].semesters[semester].find(mk => mk.kode === kodeMk);
-    if(exists) {
+    if (exists) {
         showToast('Mata kuliah ini sudah diinput pada semester tersebut!', 'error');
         return;
     }
@@ -247,14 +328,28 @@ function handleFormSubmit(event) {
     // Add subject
     data.students[nim].semesters[semester].push({
         kode: kodeMk,
-        matkul: namaMk, 
-        sks: sks, 
-        nilaiHuruf: nilaiHuruf, 
+        matkul: namaMk,
+        sks: sks,
+        nilaiHuruf: nilaiHuruf,
         nilaiAngka: nilaiAngka
     });
 
-    saveData(data);
-    
+    // Calculate updated IPK for this student to send to Google Sheets
+    const currentIpk = calculateIPK(data.students[nim]).toFixed(2);
+
+    // Send to Google Sheets
+    sendToGoogleSheets({
+        id: Date.now(),
+        action: 'input_nilai',
+        nim: nim,
+        nama: nama,
+        semester: semester,
+        matkul: namaMk,
+        sks: sks,
+        nilaiHuruf: nilaiHuruf,
+        ipk: currentIpk
+    });
+
     // Reset specific fields
     document.getElementById('input-matkul').value = '';
     document.getElementById('display-sks').value = '';
@@ -262,7 +357,7 @@ function handleFormSubmit(event) {
     document.getElementById('input-nilai').value = '';
     document.getElementById('input-matkul').focus();
 
-    showToast('Data nilai berhasil direkam!');
+    showToast('Data berhasil direkam & disinkron ke Google Sheets!');
 }
 
 // --- Calculations & View Logic ---
@@ -305,7 +400,7 @@ function updateDashboard() {
     }
 
     document.getElementById('stat-mhs').innerText = totalMhs;
-    document.getElementById('stat-matkul-master').innerText = totalMatkulMaster; 
+    document.getElementById('stat-matkul-master').innerText = totalMatkulMaster;
     document.getElementById('stat-nilai').innerText = totalNilai;
 }
 
@@ -313,26 +408,26 @@ function updateView() {
     const data = getData();
     const tbody = document.getElementById('table-mhs-body');
     const emptyState = document.getElementById('empty-state');
-    
+
     tbody.innerHTML = '';
-    
+
     const students = Object.values(data.students);
-    
+
     if (students.length === 0) {
         emptyState.classList.remove('hidden');
     } else {
         emptyState.classList.add('hidden');
-        
+
         students.forEach(student => {
             let totalSKS = 0;
             for (const sem in student.semesters) {
                 student.semesters[sem].forEach(mk => totalSKS += mk.sks);
             }
-            
+
             const ipk = calculateIPK(student).toFixed(2);
             let ipkColor = 'text-green-600';
             let ipkBg = 'bg-green-50';
-            
+
             if (ipk < 2.0) { ipkColor = 'text-red-600'; ipkBg = 'bg-red-50'; }
             else if (ipk < 3.0) { ipkColor = 'text-amber-600'; ipkBg = 'bg-amber-50'; }
 
@@ -378,20 +473,20 @@ function viewDetail(nim) {
     semestersContainer.innerHTML = '';
 
     // Sort semesters
-    const semKeys = Object.keys(student.semesters).sort((a,b) => parseInt(a) - parseInt(b));
+    const semKeys = Object.keys(student.semesters).sort((a, b) => parseInt(a) - parseInt(b));
 
     semKeys.forEach(sem => {
         const mkData = student.semesters[sem];
         const ips = calculateIPS(mkData).toFixed(2);
-        
+
         let sksSem = 0;
         let rows = '';
-        
+
         mkData.forEach(mk => {
             sksSem += mk.sks;
             let badgeColor = 'bg-green-100 text-green-700';
-            if(['D','E'].includes(mk.nilaiHuruf)) badgeColor = 'bg-red-100 text-red-700';
-            else if(['C','C+'].includes(mk.nilaiHuruf)) badgeColor = 'bg-amber-100 text-amber-700';
+            if (['D', 'E'].includes(mk.nilaiHuruf)) badgeColor = 'bg-red-100 text-red-700';
+            else if (['C', 'C+'].includes(mk.nilaiHuruf)) badgeColor = 'bg-amber-100 text-amber-700';
 
             rows += `
                 <tr class="border-b border-gray-50 last:border-0 hover:bg-gray-50/50 transition-colors">
@@ -446,22 +541,10 @@ function closeDetail() {
 }
 
 function clearAllData() {
-    if(confirm('Apakah Anda yakin ingin menghapus SEMUA data? Ini akan mereset Master Data & Nilai Mahasiswa.')) {
-        localStorage.removeItem(STORAGE_KEY);
-        
-        // Return to old data key for compatibility if it existed? Better just wipe.
-        updateDashboard();
-        updateMasterView();
-        populateMatkulDropdown();
-        updateView();
-        closeDetail();
-        showToast('Sistem telah direset total.', 'success');
-    }
+    alert("Sistem ini kini terhubung langsung ke Google Sheets secara permanen. Untuk melakukan Reset/Menghapus seluruh data, Anda harus masuk ke file Google Sheets Anda, lalu blok semua baris dan tekan tombol Delete (Hapus).");
 }
 
 // Init
 window.onload = () => {
-    updateDashboard();
-    updateMasterView();
-    populateMatkulDropdown();
+    fetchDataFromGoogleSheets();
 };

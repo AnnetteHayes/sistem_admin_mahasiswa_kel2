@@ -45,7 +45,12 @@
     </style>
 </head>
 <body class="bg-gray-50 text-gray-800 antialiased selection:bg-indigo-100 selection:text-indigo-900">
-
+    <!-- Global Loading Overlay -->
+    <div id="loading-overlay" class="fixed inset-0 bg-white/80 backdrop-blur-sm z-50 flex flex-col items-center justify-center transition-opacity duration-300">
+        <div class="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-indigo-600 mb-4"></div>
+        <h2 class="text-xl font-bold text-gray-800">Memuat Data...</h2>
+        <p class="text-sm text-gray-500 mt-2">Sinkronisasi dengan Google Sheets</p>
+    </div>
     <div class="flex flex-col md:flex-row h-screen overflow-hidden">
         
         <!-- Sidebar -->
