@@ -1,5 +1,5 @@
 // --- Data Management ---
-const GOOGLE_SHEETS_URL = 'https://script.google.com/macros/s/AKfycbxICJjeVt-XwZRjG0-7IUV33-lQgJM4ie4yJ8NMbJcFAFXeZKHKODweUXoksnH3Z9T4/exec';
+const GOOGLE_SHEETS_URL = 'https://script.google.com/macros/s/AKfycbyFVFGiBf1Xz6qKwyrHmSfBKyc13qgHOSUZp_Qf3zNsJ2UjtzxWM2OTxBKx9JcXUup7/exec';
 
 let appData = { mataKuliah: {}, students: {} };
 
