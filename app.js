@@ -46,62 +46,77 @@ async function fetchDataFromGoogleSheets() {
         const response = await fetch(GOOGLE_SHEETS_URL);
         const data = await response.json();
         
-        // Reconstruct appData from Google Sheets JSON
         appData = { mataKuliah: {}, students: {} };
         
-        // Parse Master Matkul
-        if (data.mataKuliah) {
-            data.mataKuliah.forEach(mk => {
-                appData.mataKuliah[mk.kode] = { 
-                    kode: mk.kode, 
-                    nama: mk.nama, 
-                    sks: parseInt(mk.sks) 
-                };
+        // Deteksi otomatis letak array mata kuliah
+        let mkList = [];
+        if (data.mataKuliah) mkList = data.mataKuliah;
+        else if (data.Kuliah) mkList = data.Kuliah;
+        else if (data.matakuliah) mkList = data.matakuliah;
+        else if (Array.isArray(data)) mkList = data; // jika data berbentuk array langsung
+        
+        if (Array.isArray(mkList)) {
+            mkList.forEach(mk => {
+                if(mk.kode) {
+                    appData.mataKuliah[mk.kode] = { 
+                        kode: mk.kode, 
+                        nama: mk.nama || mk.namaMK || '', 
+                        sks: parseInt(mk.sks) || 0
+                    };
+                }
             });
         }
         
-        // Parse Students
-        if (data.students) {
-            data.students.forEach(row => {
+        // Deteksi otomatis letak array data mahasiswa
+        let studentList = [];
+        if (data.students) studentList = data.students;
+        else if (data.mahasiswa) studentList = data.mahasiswa;
+        
+        if (Array.isArray(studentList)) {
+            studentList.forEach(row => {
                 const nim = row.nim;
                 const semester = row.semester;
+                if (!nim) return;
                 
                 if (!appData.students[nim]) {
                     appData.students[nim] = {
                         nim: nim,
-                        nama: row.nama,
+                        nama: row.nama || '',
                         semesters: {}
                     };
                 }
                 
-                if (!appData.students[nim].semesters[semester]) {
-                    appData.students[nim].semesters[semester] = [];
+                if (semester) {
+                    if (!appData.students[nim].semesters[semester]) {
+                        appData.students[nim].semesters[semester] = [];
+                    }
+                    
+                    appData.students[nim].semesters[semester].push({
+                        kode: row.kode || row.matkul || '',
+                        matkul: row.matkul || row.nama || '',
+                        sks: parseInt(row.sks) || 0,
+                        nilaiHuruf: row.nilaiHuruf || '',
+                        nilaiAngka: scale[row.nilaiHuruf] || 0
+                    });
                 }
-                
-                appData.students[nim].semesters[semester].push({
-                    kode: row.matkul, // Assuming matkul stores the name, if they stored kode it would be better. Let's use it as matkul name for now
-                    matkul: row.matkul,
-                    sks: parseInt(row.sks),
-                    nilaiHuruf: row.nilaiHuruf,
-                    nilaiAngka: scale[row.nilaiHuruf] || 0
-                });
             });
         }
         
-        // Update UI
-        updateDashboard();
-        updateMasterView();
-        populateMatkulDropdown();
-        updateView();
+        // Update UI secara aman
+        if (typeof updateDashboard === 'function') updateDashboard();
+        if (typeof updateMasterView === 'function') updateMasterView();
+        if (typeof populateMatkulDropdown === 'function') populateMatkulDropdown();
+        if (typeof updateView === 'function') updateView();
         
-        // Hide overlay
-        overlay.classList.add('opacity-0', 'pointer-events-none');
-        setTimeout(() => overlay.classList.add('hidden'), 300);
+        if (overlay) {
+            overlay.classList.add('opacity-0', 'pointer-events-none');
+            setTimeout(() => overlay.classList.add('hidden'), 300);
+        }
         
     } catch (error) {
         console.error("Error fetching data:", error);
         alert("Gagal memuat data dari Google Sheets. Pastikan URL Web App benar dan bisa diakses secara publik.");
-        overlay.classList.add('opacity-0', 'pointer-events-none');
+        if (overlay) overlay.classList.add('opacity-0', 'pointer-events-none');
     }
 }
 
